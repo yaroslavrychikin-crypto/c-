@@ -208,7 +208,7 @@ pacman -Syu
 
 # Устанавливаем полный набор инструментов разработки:
 # g++ (компилятор C++), gcc, gdb (отладчик), make и т.д.
-pacman -S --needed base-devel mingw-w64-ucrt-x86_64-toolchain
+pacman -S mingw-w64-ucrt-x86_64-toolchain
 ```
 
 Во время установки на вопрос о пакетах просто нажмите Enter (устанавливается всё по умолчанию).
