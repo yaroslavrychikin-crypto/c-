@@ -112,16 +112,7 @@ void check(int x) {
 }
 ```
 
-**3. Не возвращай адрес локальной переменной!** Локальная переменная умирает, когда функция заканчивается, и адрес становится «мусорным» (это называется undefined behavior — программа может сделать что угодно).
-
-```cpp
-int* bad() {
-    int x = 42;
-    return &x;         // ❌ x умрёт, указатель станет мусором
-}
-```
-
-**4. `[[nodiscard]]`** — если пометить функцию так, компилятор предупредит, когда ты забудешь использовать результат.
+**3. `[[nodiscard]]`** — если пометить функцию так, компилятор предупредит, когда ты забудешь использовать результат.
 
 ```cpp
 [[nodiscard]] int compute();
@@ -185,7 +176,6 @@ print_big(huge);                     // дорого для большой ст�
 
 void print(std::string_view s) {
     std::cout << s;      // ✅ читаем
-    // s[0] = 'X';       // ❌ ошибка компиляции — только чтение
 }
 
 int main() {
@@ -202,13 +192,6 @@ int main() {
 - Данные должны жить, пока ты на них смотришь.
 
 ⚠️ **Главная ловушка:** не сохраняй `string_view` дольше, чем живёт исходная строка. Если строка умрёт, `string_view` будет смотреть в пустоту.
-
-```cpp
-std::string_view bad() {
-    std::string s = "hello";
-    return s;            // ❌ s умрёт, string_view станет мусором
-}
-```
 
 ### Когда использовать
 
@@ -262,27 +245,17 @@ void f(int a, int b) {    // без "= 10"!
 
 ### Подводные камни
 
-**Виртуальные функции** — default-аргументы берутся из **статического** типа, а не из динамического. Это классическая ловушка:
-
-```cpp
-struct Base { virtual void f(int x = 1); };
-struct Derived : Base { void f(int x = 2) override; };
-
-Base* p = new Derived;
-p->f();   // вызовется Derived::f, но с x = 1 (!) — сюрприз
-```
-
 **Магические флаги** — не делай так:
 
 ```cpp
 void process(int x, bool flag = false);   // ❌ что значит flag?
 ```
 
-Лучше `enum class` или отдельные функции с понятными именами:
+Лучше отдельные функции с понятными именами:
 
 ```cpp
-enum class Mode { Fast, Safe };
-void process(int x, Mode mode = Mode::Safe);   // ✅ понятно
+void process_fast(int x);
+void process_safe(int x);   // ✅ понятно
 ```
 
 ---
@@ -314,9 +287,12 @@ void print_sum(int a, int b) {
 **1. Легко тестировать.** Не нужно ничего настраивать — просто вызвал и проверил результат.
 
 ```cpp
-assert(square(5) == 25);
-assert(square(-3) == 9);
-assert(add(2, 3) == 5);
+int result = square(5);
+if (result == 25) {
+    std::cout << "OK\n";
+} else {
+    std::cout << "FAIL\n";
+}
 ```
 
 **2. Легко понять.** Функция не зависит от того, что происходит в других местах программы.
@@ -350,7 +326,6 @@ int main() {
 
 ```cpp
 constexpr int square(int x) { return x * x; }
-static_assert(square(5) == 25);   // проверяется ещё до запуска программы
 ```
 
 ### Практика
@@ -370,15 +345,13 @@ C++ не имеет специального слова «contract». Но ес�
 | `[[nodiscard]]` | результат важен, не игнорируй |
 | `noexcept` | не бросает исключений |
 | `constexpr` | вычисляется на этапе компиляции |
-| `std::optional<T>` | «может не быть значения» |
-| `enum class` | явные допустимые значения вместо `bool`/`int` |
 
 Пример явного контракта в комментарии:
 
 ```cpp
-// Precondition: 0 <= index < length
-// Postcondition: возвращает элемент, не меняет данные
-[[nodiscard]] int at(int index) const;
+// Precondition: age >= 0
+// Postcondition: возвращает true, если age >= 18, не меняет данные
+[[nodiscard]] bool is_adult(int age);
 ```
 
 **Precondition** — что должно быть верно **до** вызова.
@@ -397,7 +370,7 @@ C++ не имеет специального слова «contract». Но ес�
 #include <string>
 
 void process_user(std::string raw) {
-    auto pos = raw.find(',');
+    int pos = raw.find(',');
     if (pos == std::string::npos) {
         std::cerr << "bad line: " << raw << "\n";
         return;
@@ -441,60 +414,77 @@ void process_user(std::string raw) {
 #include <iostream>
 #include <string>
 #include <string_view>
-#include <optional>
 
-// ── 1. Разобрать одну запись "name,age" ─────────────────
-// Контракт: вход — строка "name,age".
-// Возвращает true при успехе (name/age заполнены) или false при ошибке.
-// Не печатает, не бросает — чистая функция.
-[[nodiscard]] bool parse_user(std::string_view line,
-                              std::string& name, int& age) {
-    const auto comma = line.find(',');
-    if (comma == std::string_view::npos) return false;
-
-    const auto name_part = line.substr(0, comma);
-    const auto age_part = line.substr(comma + 1);
-    if (name_part.empty() || age_part.empty()) return false;
-
-    int parsed_age = 0;
-    try {
-        parsed_age = std::stoi(std::string(age_part));
-    } catch (...) {
-        return false;
-    }
-    if (parsed_age < 0 || parsed_age > 150) return false;
-
-    name = std::string(name_part);
-    age = parsed_age;
-    return true;
+// ── 1. Проверить, есть ли запятая в строке ─────────────
+// Контракт: вход — любая строка.
+// Возвращает true, если в строке есть запятая.
+// Чистая функция, ничего не печатает.
+[[nodiscard]] bool has_comma(std::string_view line) {
+    int pos = line.find(',');
+    return pos != std::string_view::npos;
 }
 
-// ── 2. Проверить, совершеннолетний ли ───────────────────
+// ── 2. Извлечь имя из строки "name,age" ─────────────────
+// Контракт: вход — строка с запятой.
+// Возвращает часть до запятой.
+// Чистая функция, ничего не печатает.
+[[nodiscard]] std::string get_name(std::string_view line) {
+    int pos = line.find(',');
+    return std::string(line.substr(0, pos));
+}
+
+// ── 3. Извлечь возраст из строки "name,age" ─────────────
+// Контракт: вход — строка с запятой.
+// Возвращает возраст как int или -1, если возраст не число.
+// Чистая функция, ничего не печатает.
+[[nodiscard]] int get_age(std::string_view line) {
+    int pos = line.find(',');
+    std::string age_part = std::string(line.substr(pos + 1));
+    try {
+        return std::stoi(age_part);
+    } catch (...) {
+        return -1;
+    }
+}
+
+// ── 4. Проверить, корректны ли данные ───────────────────
+// Контракт: name не пустое, 0 <= age <= 150.
+// Чистая функция, ничего не печатает.
+[[nodiscard]] bool is_valid(std::string_view name, int age) {
+    return !name.empty() && age >= 0 && age <= 150;
+}
+
+// ── 5. Проверить, совершеннолетний ли ───────────────────
 // Контракт: age >= 0. Чистая функция, ничего не печатает.
-[[nodiscard]] bool is_adult(int age) noexcept {
+[[nodiscard]] bool is_adult(int age) {
     return age >= 18;
 }
 
-// ── 3. Напечатать отчёт ──────────────────────────────────
-// Контракт: печатает отчёт в os. Единственная функция с I/O.
-void print_report(const std::string& name, int age, std::ostream& os) {
-    os << "name=" << name << "\n";
-    os << "age=" << age << "\n";
-    os << "adult=" << (is_adult(age) ? "yes" : "no") << "\n";
+// ── 6. Напечатать отчёт ──────────────────────────────────
+// Контракт: печатает отчёт. Единственная функция с I/O.
+void print_report(std::string_view name, int age) {
+    std::cout << "name=" << name << "\n";
+    std::cout << "age=" << age << "\n";
+    std::cout << "adult=" << (is_adult(age) ? "yes" : "no") << "\n";
 }
 
-// ── 4. Главная функция — связывает всё вместе ───────────
+// ── 7. Главная функция — связывает всё вместе ───────────
 // Контракт: разбирает строку, печатает ошибку или отчёт.
 void process_user(std::string_view raw) {
-    std::string name;
-    int age = 0;
-
-    if (!parse_user(raw, name, age)) {
+    if (!has_comma(raw)) {
         std::cerr << "bad line: " << raw << "\n";
         return;
     }
 
-    print_report(name, age, std::cout);
+    std::string name = get_name(raw);
+    int age = get_age(raw);
+
+    if (!is_valid(name, age)) {
+        std::cerr << "invalid user: " << raw << "\n";
+        return;
+    }
+
+    print_report(name, age);
 }
 ```
 
@@ -503,43 +493,64 @@ void process_user(std::string_view raw) {
 | Было (монолит) | Стало (разбили) |
 |---|---|
 | Всё в одной функции — тяжело читать | Каждая функция делает одно дело |
-| Непонятно, что считается ошибкой | `parse_user` возвращает `bool` — явный контракт |
+| Непонятно, что считается ошибкой | `is_valid` — явный контракт |
 | `cout`/`cerr` везде | I/O только в `print_report` и `process_user` |
-| Нельзя протестировать парсинг | `parse_user` и `is_adult` — чистые, тестируются легко |
+| Нельзя протестировать парсинг | `get_name`, `get_age`, `is_adult` — чистые, тестируются легко |
 | Нельзя переиспользовать | Каждую функцию можно вызвать отдельно |
 
-### Мини-тесты (проверка контрактов)
+### Мини-проверки (без `assert`)
+
+Вместо `assert` просто вызывай функции и сравнивай результат через `if`:
 
 ```cpp
-#include <cassert>
+#include <iostream>
 
 int main() {
-    // parse_user — чистая функция, проверяем без I/O
-    std::string name;
-    int age = 0;
+    // get_name — чистая функция
+    if (get_name("Bob,25") == "Bob") {
+        std::cout << "get_name OK\n";
+    } else {
+        std::cout << "get_name FAIL\n";
+    }
 
-    assert(!parse_user("bad", name, age));           // нет запятой
-    assert(!parse_user(",25", name, age));            // пустое имя
-    assert(!parse_user("Bob,abc", name, age));        // не число
-    assert(!parse_user("Bob,-1", name, age));         // отрицательный возраст
-    assert(!parse_user("Bob,200", name, age));        // слишком большой
+    // get_age — чистая функция
+    if (get_age("Bob,25") == 25) {
+        std::cout << "get_age OK\n";
+    } else {
+        std::cout << "get_age FAIL\n";
+    }
 
-    assert(parse_user("Bob,25", name, age));          // OK
-    assert(name == "Bob");
-    assert(age == 25);
+    // невалидный возраст
+    if (get_age("Bob,abc") == -1) {
+        std::cout << "get_age bad OK\n";
+    } else {
+        std::cout << "get_age bad FAIL\n";
+    }
+
+    // is_valid — чистая функция
+    if (!is_valid("", 25)) {
+        std::cout << "is_valid empty OK\n";
+    }
+    if (!is_valid("Bob", -1)) {
+        std::cout << "is_valid negative OK\n";
+    }
+    if (is_valid("Bob", 25)) {
+        std::cout << "is_valid OK\n";
+    }
 
     // is_adult — чистая функция
-    assert(!is_adult(17));
-    assert(is_adult(18));
-    assert(is_adult(100));
+    if (!is_adult(17) && is_adult(18) && is_adult(100)) {
+        std::cout << "is_adult OK\n";
+    }
 }
 ```
 
 ### Задание читателю
 
-1. **Добавь `trim`** — функцию, которая убирает пробелы в начале и конце строки. Сделай её чистой: принимает `string_view`, возвращает `string_view`.
+1. **Добавь функцию `trim`** — убирает пробелы в начале и конце строки. Сделай её чистой: принимает `std::string`, возвращает `std::string`.
 2. **Добавь функцию `category(age)`** — возвращает `"child"`, `"adult"` или `"senior"`. Чистая, тестируется отдельно.
-3. **Покрой тестами** `parse_user` и `is_adult` — не трогая `std::cout`.
+3. **Поменяй `get_age` так, чтобы она возвращала `-1` не только при ошибке, но и при возрасте вне диапазона** — и объясни, почему это может быть плохой идеей (подсказка: `-1` — допустимое значение возраста?).
+4. **Проверь каждую функцию** через `if` + `std::cout`, не трогая `process_user`.
 
 ---
 
@@ -548,10 +559,11 @@ int main() {
 Перед тем как написать функцию, ответь себе на вопросы:
 
 - [ ] **Что функция принимает?** Какие значения допустимы? (preconditions)
-- [ ] **Что она возвращает?** Что значит «нет результата» — `optional`, `bool` + выходной параметр или исключение?
+- [ ] **Что она возвращает?** Что значит «нет результата» — `-1`, `bool` или исключение?
+- [ ] **Меняет ли она аргументы?** `T` — работает с отдельным значением, `string_view` — только читает.
 - [ ] **Есть ли побочные эффекты?** Печатает? Меняет глобальные переменные? Можно ли вынести в отдельную функцию?
 - [ ] **Может ли она быть чистой?** Если да — сделай чистой и `constexpr`.
-- [ ] **Нужны ли default-аргументы?** Или лучше `enum class` или перегрузки?
+- [ ] **Нужны ли default-аргументы?** Или лучше отдельные функции с понятными именами?
 - [ ] **Результат важен?** Помечай `[[nodiscard]]`.
 
 **Главная мысль:** маленькая функция с понятным контрактом лучше большой функции, которая делает всё сразу. Разбивай, называй понятно, документируй, что ожидаешь и что гарантируешь.
